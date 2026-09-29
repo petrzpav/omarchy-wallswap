@@ -22,14 +22,18 @@ rotates through the ~40 images it has already cached.
 omarchy plugin add https://github.com/petrzpav/omarchy-wallswap.git --enable
 ```
 
-An icon appears in the right side of the bar:
+An icon appears in the right side of the bar. **Click** it for the panel:
 
-- **Click** – next background now
-- **Right-click** – open the current image's source page
-- **Middle-click** – keep it: copies the image to
-  `~/.config/omarchy/backgrounds/<theme>/`, so it stays in the theme's
-  own rotation (`omarchy theme bg next`)
-- **Hover** – title, credit and time to the next swap
+- the current image with its title, credit and resolution (click it to open the source page)
+- a switch to pause or resume automatic swapping, and when the next swap is due
+- **Next** / **Previous** background
+- **Open source page**
+- **Keep in theme backgrounds**: copies the image to
+  `~/.config/omarchy/backgrounds/<theme>/`, so it stays in the theme's own
+  rotation (`omarchy theme bg next`)
+
+The keyboard works too: arrows and Enter, or `N`, `P`, `O`, `K`, and `Space` to pause.
+**Right-click** the icon for the next background, or **middle-click** to keep the current one.
 
 Settings (sources, interval, minimum width, Wallhaven search, local folder, NASA
 API key) are in the bar settings panel, or inline in `~/.config/omarchy/shell.json`:
@@ -48,10 +52,14 @@ The widget only drives `bin/wallswap`, which you can also use directly:
 ```bash
 W=~/.config/omarchy/plugins/petrzpav.wallswap/bin/wallswap
 $W next                         # new background now
+$W prev                         # back to the previous one
+$W pause | resume | toggle      # automatic swapping
 $W next --sources apod          # ...from a specific source
 $W info                         # current image as JSON
 $W open | keep | sources | help
 ```
+
+Open the panel from anywhere with `omarchy-shell wallswap toggle`.
 
 Keybinding example (`~/.config/hypr/bindings.lua`):
 
