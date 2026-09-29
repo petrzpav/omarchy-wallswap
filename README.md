@@ -103,7 +103,30 @@ o.bind("SUPER + ALT + B", "Next background", "~/.config/omarchy/plugins/petrzpav
 
 Files: images are cached in `~/.cache/wallswap/` and state is kept in `~/.local/state/wallswap/`.
 
-Requires `curl`, `jq` and ImageMagick (all present on Omarchy).
+## Requirements and network use
+
+Requires `curl`, `jq` and ImageMagick (all present on Omarchy). No sudo, no
+system services, no telemetry.
+
+Wallswap only contacts the image sources you enable: `api.nasa.gov` /
+`apod.nasa.gov`, `bing.com`, `api.wikimedia.org` / `upload.wikimedia.org` and
+`wallhaven.cc`. Images keep their original licenses, and the panel shows the
+credit and links to the source page.
+
+What it changes: the current-background symlink (via `omarchy theme bg set`),
+its own entry in `~/.config/omarchy/shell.json` when you change settings in
+the panel, and, only when you choose **Keep**, a copy of the image in
+`~/.config/omarchy/backgrounds/<theme>/`.
+
+## Remove
+
+```bash
+omarchy plugin remove petrzpav.wallswap
+rm -rf ~/.cache/wallswap ~/.local/state/wallswap   # optional: cached images and state
+```
+
+Your background stays on the last image until you change the theme or run
+`omarchy theme bg next`.
 
 ## License
 
