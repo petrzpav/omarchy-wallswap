@@ -173,6 +173,13 @@ try_candidate() { # source url title credit page w h
   fi
 
   echo "$url" >> "$STATE_DIR/seen"
+  if [[ $source == wallhaven && $page =~ /w/([a-z0-9]+)$ ]]; then
+    # The search API has no tags; one extra call gives the image a real title.
+    local tags
+    tags=$(http "https://wallhaven.cc/api/v1/w/${BASH_REMATCH[1]}" 2>/dev/null |
+      jq -r '[.data.tags[].name] | .[0:4] | join(", ") | select(. != "")' 2>/dev/null)
+    [[ -n $tags ]] && title=${tags^}
+  fi
   local meta="$CACHE_DIR/$source-$id.json"
   jq -n --arg file "$file" --arg url "$url" --arg title "$title" --arg credit "$credit" \
     --arg page "$page" --arg source "$source" --arg sourceName "${SOURCE_NAMES[$source]}" \

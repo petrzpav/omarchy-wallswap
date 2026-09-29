@@ -37,6 +37,8 @@ Panel {
   readonly property color dim: Qt.darker(foreground, 1.55)
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
+  readonly property var sourceLabels: ({ apod: "NASA APOD", bing: "Bing", wikimedia: "Wikimedia", wallhaven: "Wallhaven", local: "Local folder" })
+
   property bool busy: false
   property string busyLabel: ""
   property string lastError: ""
@@ -50,7 +52,7 @@ Panel {
   readonly property var actions: [
     { id: "next", glyph: "", label: "Next background", hint: "N", enabled: !busy },
     { id: "prev", glyph: "", label: "Previous background", hint: "P", enabled: !busy && info.hasPrevious === true },
-    { id: "open", glyph: "", label: "Open source page", hint: "O", enabled: !!info.page },
+    { id: "open", glyph: "", label: "Open source page", hint: "O", enabled: !!info.page },
     { id: "keep", glyph: "", label: "Keep in theme backgrounds", hint: "K", enabled: hasImage }
   ]
 
@@ -325,7 +327,7 @@ Panel {
         Text {
           textFormat: Text.PlainText
           width: parent.width
-          text: "Sources: " + root.sources.join(", ") + (root.interval > 0 ? " · every " + root.interval + " min" : "")
+          text: "Sources: " + root.sources.map(function(s) { return root.sourceLabels[s] || s }).join(", ") + (root.interval > 0 ? " · every " + root.interval + " min" : "")
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
