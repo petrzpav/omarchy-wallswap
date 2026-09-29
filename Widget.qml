@@ -42,6 +42,9 @@ Panel {
 
   readonly property var sourceLabels: ({ apod: "NASA APOD", bing: "Bing", wikimedia: "Wikimedia", wallhaven: "Wallhaven", local: "Local folder" })
 
+  // Passed through the environment, never argv, so the key stays out of `ps`.
+  readonly property var scriptEnvironment: nasaKey !== "" ? ({ NASA_API_KEY: nasaKey }) : ({})
+
   property bool busy: false
   property string busyLabel: ""
   property string lastError: ""
@@ -79,7 +82,7 @@ Panel {
     if (allowPortrait) a.push("--allow-portrait")
     if (query !== "") a.push("--query", query)
     if (localDir !== "") a.push("--local-dir", localDir)
-    return nasaKey !== "" ? ["env", "NASA_API_KEY=" + nasaKey].concat(a) : a
+    return a
   }
 
   // Swaps go through one process so a click never overlaps the timer's tick.
@@ -179,6 +182,7 @@ Panel {
 
   Process {
     id: swapProc
+    environment: root.scriptEnvironment
     stderr: StdioCollector {
       id: swapErr
       waitForEnd: true
@@ -195,11 +199,13 @@ Panel {
 
   Process {
     id: actionProc
+    environment: root.scriptEnvironment
     onExited: root.refreshInfo()
   }
 
   Process {
     id: infoProc
+    environment: root.scriptEnvironment
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {

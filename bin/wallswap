@@ -40,6 +40,7 @@ QUERY=${WALLSWAP_QUERY:-}
 LOCAL_DIR=${WALLSWAP_LOCAL_DIR:-$HOME/Pictures/Wallpapers}
 KEEP=${WALLSWAP_KEEP:-40}
 NASA_KEY=${NASA_API_KEY:-DEMO_KEY}
+[[ $NASA_KEY =~ ^[A-Za-z0-9]{1,128}$ ]] || NASA_KEY=DEMO_KEY
 
 CACHE_DIR=${XDG_CACHE_HOME:-$HOME/.cache}/wallswap
 STATE_DIR=${XDG_STATE_HOME:-$HOME/.local/state}/wallswap
@@ -47,6 +48,27 @@ UA="wallswap/1.0 (Omarchy background plugin)"
 ATTEMPTS=6
 
 log() { echo "wallswap: $*" >&2; }
+
+# Replace a state file by rename, so an existing symlink at that path is
+# replaced rather than followed.
+write_state() { # name  (content on stdin)
+  local tmp
+  tmp=$(mktemp -- "$STATE_DIR/.$1.XXXXXX") || return 1
+  cat > "$tmp" && mv -f -- "$tmp" "$STATE_DIR/$1" || { rm -f -- "$tmp"; return 1; }
+}
+
+append_state() { # name line
+  { cat -- "$STATE_DIR/$1" 2>/dev/null; printf '%s\n' "$2"; } | write_state "$1"
+}
+
+# State and cache must be real directories owned by the user and private to
+# them, so nobody else can plant a symlink in them.
+private_dir() { # path
+  [[ -L $1 ]] && die "refusing a symlinked directory: $1"
+  mkdir -p -m 700 -- "$1" || die "cannot create $1"
+  [[ -d $1 && ! -L $1 && -O $1 ]] || die "not a directory owned by you: $1"
+  chmod 700 -- "$1"
+}
 die() { log "$*"; exit 1; }
 
 # Network policy: HTTPS only, no redirects (none of the sources use them), and a
@@ -106,7 +128,9 @@ image_coder() { # file -> jpeg|png|webp
 # Width/height are optional; they let us skip unsuitable images before download.
 
 src_apod() {
-  http "https://api.nasa.gov/planetary/apod?api_key=$NASA_KEY&count=5" | jq -r '
+  # The key goes to curl on stdin, never on its command line, so it does not
+  # show up in the process list.
+  http --config - <<< "url = \"https://api.nasa.gov/planetary/apod?api_key=$NASA_KEY&count=5\"" | jq -r '
     .[] | select(.media_type == "image")
     | (.date | gsub("-"; "") | .[2:]) as $d
     | [(.hdurl // .url), .title, ("NASA APOD" + (if .copyright then " · © " + (.copyright | gsub("\\s+"; " ") | ltrimstr(" ")) else "" end)),
@@ -184,9 +208,8 @@ prune_cache() {
     rm -f -- "$meta"
   done
   # Forget history entries whose metadata was pruned.
-  [[ -f $STATE_DIR/history ]] && while read -r m; do [[ -f $m ]] && echo "$m"; done < "$STATE_DIR/history" | tail -n "$KEEP" > "$STATE_DIR/history.tmp" \
-    && mv "$STATE_DIR/history.tmp" "$STATE_DIR/history"
-  tail -n 2000 "$STATE_DIR/seen" > "$STATE_DIR/seen.tmp" 2>/dev/null && mv "$STATE_DIR/seen.tmp" "$STATE_DIR/seen"
+  [[ -f $STATE_DIR/history ]] && while read -r m; do [[ -f $m ]] && echo "$m"; done < "$STATE_DIR/history" | tail -n "$KEEP" | write_state history
+  [[ -f $STATE_DIR/seen ]] && tail -n 2000 "$STATE_DIR/seen" | write_state seen
 }
 
 # Try one candidate: download, validate, cache, set. Returns 0 on success.
@@ -199,7 +222,7 @@ try_candidate() { # source url title credit page w h
   fi
   allowed_page "$source" "$page" || page=""
   seen "$url" && return 1
-  acceptable "$w" "$h" || { echo "$url" >> "$STATE_DIR/seen"; return 1; }
+  acceptable "$w" "$h" || { append_state seen "$url"; return 1; }
 
   local id ext file tmp dims
   id=$(printf '%s' "$url" | sha1sum | cut -c1-12)
@@ -210,7 +233,7 @@ try_candidate() { # source url title credit page w h
   if [[ $url == file://* ]]; then
     file=${url#file://}
   elif [[ ! -s $file ]]; then
-    tmp="$file.part"
+    tmp=$(mktemp -- "$CACHE_DIR/.download.XXXXXX") || return 1
     log "downloading $url"
     if ! curl "${CURL_POLICY[@]}" --max-time 120 --max-filesize "$IMAGE_MAX_BYTES" -o "$tmp" -- "$url"; then
       rm -f -- "$tmp"; return 1
@@ -223,12 +246,12 @@ try_candidate() { # source url title credit page w h
   [[ -n $coder ]] && dims=$(magick identify -format '%w %h' "$coder:${file}[0]" 2>/dev/null)
   if [[ -z $dims ]] || ! acceptable $dims; then
     log "rejected $url (${dims:-not an image})"
-    echo "$url" >> "$STATE_DIR/seen"
+    append_state seen "$url"
     [[ $url == file://* ]] || rm -f -- "$file"
     return 1
   fi
 
-  echo "$url" >> "$STATE_DIR/seen"
+  append_state seen "$url"
   if [[ $source == wallhaven && $page =~ /w/([a-z0-9]+)$ ]]; then
     # The search API has no tags; one extra call gives the image a real title.
     local tags
@@ -241,7 +264,7 @@ try_candidate() { # source url title credit page w h
     --arg page "$page" --arg source "$source" --arg sourceName "${SOURCE_NAMES[$source]}" \
     --arg size "${dims/ /x}" --arg at "$(date -Iseconds)" \
     '{file:$file, url:$url, title:$title, credit:$credit, page:$page, source:$source, sourceName:$sourceName, size:$size, fetchedAt:$at}' \
-    > "$meta"
+    > "$meta.$$" && mv -f -- "$meta.$$" "$meta"
   apply "$meta"
 }
 
@@ -250,9 +273,9 @@ apply() { # meta.json [--no-history]
   file=$(jq -r '.file' "$1")
   [[ -f $file ]] || return 1
   set_background "$file" || return 1
-  cp -f -- "$1" "$STATE_DIR/current.json"
-  [[ $2 == --no-history ]] || echo "$1" >> "$STATE_DIR/history"
-  date +%s > "$STATE_DIR/last"
+  write_state current.json < "$1"
+  [[ $2 == --no-history ]] || append_state history "$1"
+  date +%s | write_state last
   log "set $(jq -r '"\(.title) — \(.credit)"' "$1")"
 }
 
@@ -290,12 +313,12 @@ cmd_prev() {
   mapfile -t history < "$STATE_DIR/history" 2>/dev/null
   (( ${#history[@]} >= 2 )) || die "no previous background"
   local prev=${history[-2]}
-  printf '%s\n' "${history[@]:0:${#history[@]}-1}" > "$STATE_DIR/history"
+  printf '%s\n' "${history[@]:0:${#history[@]}-1}" | write_state history
   apply "$prev" --no-history
 }
 
-cmd_pause() { touch "$STATE_DIR/paused"; }
-cmd_resume() { rm -f "$STATE_DIR/paused"; date +%s > "$STATE_DIR/last"; }
+cmd_pause() { : | write_state paused; }
+cmd_resume() { rm -f -- "$STATE_DIR/paused"; date +%s | write_state last; }
 cmd_toggle() { if [[ -f $STATE_DIR/paused ]]; then cmd_resume; else cmd_pause; fi; }
 
 cmd_tick() {
@@ -367,12 +390,16 @@ done
 [[ $KEEP =~ ^[0-9]+$ ]] || KEEP=40
 
 for tool in curl jq file magick; do command -v $tool >/dev/null || die "$tool is required"; done
-mkdir -p "$CACHE_DIR" "$STATE_DIR"
+private_dir "$CACHE_DIR"
+private_dir "$STATE_DIR"
+rm -f -- "$STATE_DIR/lock" # lock file used by 1.0.0/1.0.1; now the directory is locked
 
 case $cmd in
   next|prev|tick)
     # One swap at a time: every bar (one per monitor) runs its own timer.
-    exec 9> "$STATE_DIR/lock"
+    # Lock the private state directory itself: opening it read-only creates,
+    # truncates and follows nothing.
+    exec 9< "$STATE_DIR"
     flock -n 9 || { log "another swap is running"; exit 0; }
     "cmd_$cmd" ;;
   info|open|keep|sources|pause|resume|toggle) "cmd_$cmd" ;;
