@@ -3,7 +3,9 @@
 # wallswap - swap the Omarchy background for a fresh image from the web.
 #
 #   wallswap next                 fetch a new image now and set it
+#   wallswap prev                 go back to the previous image
 #   wallswap tick                 like `next`, but only when the interval has elapsed
+#   wallswap pause|resume|toggle  stop or restart automatic swapping
 #   wallswap info                 print the current image's metadata as JSON
 #   wallswap open                 open the current image's source page
 #   wallswap keep                 copy the current image into the theme's backgrounds
@@ -126,10 +128,15 @@ prune_cache() {
   ls -1t "$CACHE_DIR"/*.json 2>/dev/null | tail -n +$(( KEEP + 1 )) | while read -r meta; do
     local img
     img=$(jq -r '.file' "$meta" 2>/dev/null)
-    # Never delete what is on screen right now.
+    # Never delete what is on screen right now, nor anything outside the cache
+    # (the `local` source points at the user's own files).
     [[ $img == "$(jq -r '.file' "$STATE_DIR/current.json" 2>/dev/null)" ]] && continue
-    rm -f -- "$img" "$meta"
+    [[ $img == "$CACHE_DIR"/* ]] && rm -f -- "$img"
+    rm -f -- "$meta"
   done
+  # Forget history entries whose metadata was pruned.
+  [[ -f $STATE_DIR/history ]] && while read -r m; do [[ -f $m ]] && echo "$m"; done < "$STATE_DIR/history" | tail -n "$KEEP" > "$STATE_DIR/history.tmp" \
+    && mv "$STATE_DIR/history.tmp" "$STATE_DIR/history"
   tail -n 2000 "$STATE_DIR/seen" > "$STATE_DIR/seen.tmp" 2>/dev/null && mv "$STATE_DIR/seen.tmp" "$STATE_DIR/seen"
 }
 
@@ -166,8 +173,7 @@ try_candidate() { # source url title credit page w h
   fi
 
   echo "$url" >> "$STATE_DIR/seen"
-  local meta="$CACHE_DIR/$(basename "${file%.*}").json"
-  [[ $url == file://* ]] && meta="$STATE_DIR/local.json"
+  local meta="$CACHE_DIR/$source-$id.json"
   jq -n --arg file "$file" --arg url "$url" --arg title "$title" --arg credit "$credit" \
     --arg page "$page" --arg source "$source" --arg sourceName "${SOURCE_NAMES[$source]}" \
     --arg size "${dims/ /x}" --arg at "$(date -Iseconds)" \
@@ -176,11 +182,13 @@ try_candidate() { # source url title credit page w h
   apply "$meta"
 }
 
-apply() { # meta.json
+apply() { # meta.json [--no-history]
   local file
   file=$(jq -r '.file' "$1")
+  [[ -f $file ]] || return 1
   set_background "$file" || return 1
   cp -f -- "$1" "$STATE_DIR/current.json"
+  [[ $2 == --no-history ]] || echo "$1" >> "$STATE_DIR/history"
   date +%s > "$STATE_DIR/last"
   log "set $(jq -r '"\(.title) — \(.credit)"' "$1")"
 }
@@ -214,8 +222,22 @@ cmd_next() {
   fallback_cached || die "could not fetch a new background"
 }
 
+cmd_prev() {
+  local -a history
+  mapfile -t history < "$STATE_DIR/history" 2>/dev/null
+  (( ${#history[@]} >= 2 )) || die "no previous background"
+  local prev=${history[-2]}
+  printf '%s\n' "${history[@]:0:${#history[@]}-1}" > "$STATE_DIR/history"
+  apply "$prev" --no-history
+}
+
+cmd_pause() { touch "$STATE_DIR/paused"; }
+cmd_resume() { rm -f "$STATE_DIR/paused"; date +%s > "$STATE_DIR/last"; }
+cmd_toggle() { if [[ -f $STATE_DIR/paused ]]; then cmd_resume; else cmd_pause; fi; }
+
 cmd_tick() {
   (( INTERVAL > 0 )) || return 0
+  [[ -f $STATE_DIR/paused ]] && return 0
   local last now
   last=$(cat "$STATE_DIR/last" 2>/dev/null || echo 0)
   now=$(date +%s)
@@ -228,9 +250,12 @@ cmd_info() {
     local last now
     last=$(cat "$STATE_DIR/last" 2>/dev/null || echo 0)
     now=$(date +%s)
-    jq -c --argjson next "$(( INTERVAL > 0 ? INTERVAL * 60 - (now - last) : -1 ))" '. + {nextInSeconds: $next}' "$STATE_DIR/current.json"
+    jq -c --argjson next "$(( INTERVAL > 0 ? INTERVAL * 60 - (now - last) : -1 ))" \
+      --argjson paused "$([[ -f $STATE_DIR/paused ]] && echo true || echo false)" \
+      --argjson history "$(wc -l < "$STATE_DIR/history" 2>/dev/null || echo 0)" \
+      '. + {nextInSeconds: $next, paused: $paused, hasPrevious: ($history >= 2)}' "$STATE_DIR/current.json"
   else
-    echo '{}'
+    jq -cn --argjson paused "$([[ -f $STATE_DIR/paused ]] && echo true || echo false)" '{paused: $paused}'
   fi
 }
 
@@ -281,12 +306,12 @@ for tool in curl jq; do command -v $tool >/dev/null || die "$tool is required"; 
 mkdir -p "$CACHE_DIR" "$STATE_DIR"
 
 case $cmd in
-  next|tick)
+  next|prev|tick)
     # One swap at a time: every bar (one per monitor) runs its own timer.
     exec 9> "$STATE_DIR/lock"
     flock -n 9 || { log "another swap is running"; exit 0; }
     "cmd_$cmd" ;;
-  info|open|keep|sources) "cmd_$cmd" ;;
-  help|-h|--help) sed -n '3,22p' "$0" | sed 's/^# \{0,1\}//' ;;
+  info|open|keep|sources|pause|resume|toggle) "cmd_$cmd" ;;
+  help|-h|--help) sed -n '3,24p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) die "unknown command: $cmd (try: wallswap help)" ;;
 esac
