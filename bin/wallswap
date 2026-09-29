@@ -49,13 +49,19 @@ ATTEMPTS=6
 
 log() { echo "wallswap: $*" >&2; }
 
-# Replace a state file by rename, so an existing symlink at that path is
-# replaced rather than followed.
-write_state() { # name  (content on stdin)
+# Every file this script writes goes through here: the content lands in a
+# fresh mktemp file (created O_EXCL, so never an existing path or symlink) and
+# is then renamed over the target, which replaces a symlink instead of
+# following it.
+atomic_write() { # path  (content on stdin)
   local tmp
-  tmp=$(mktemp -- "$STATE_DIR/.$1.XXXXXX") || return 1
-  cat > "$tmp" && mv -f -- "$tmp" "$STATE_DIR/$1" || { rm -f -- "$tmp"; return 1; }
+  tmp=$(mktemp -- "$(dirname -- "$1")/.$(basename -- "$1").XXXXXX") || return 1
+  if cat > "$tmp" && mv -f -- "$tmp" "$1"; then return 0; fi
+  rm -f -- "$tmp"
+  return 1
 }
+
+write_state() { atomic_write "$STATE_DIR/$1"; }
 
 append_state() { # name line
   { cat -- "$STATE_DIR/$1" 2>/dev/null; printf '%s\n' "$2"; } | write_state "$1"
@@ -231,14 +237,14 @@ try_candidate() { # source url title credit page w h
   file="$CACHE_DIR/$source-$id.$ext"
 
   if [[ $url == file://* ]]; then
-    file=${url#file://}
-  elif [[ ! -s $file ]]; then
+    file=$(realpath -e -- "${url#file://}") || return 1
+  elif [[ -L $file || ! -s $file ]]; then
     tmp=$(mktemp -- "$CACHE_DIR/.download.XXXXXX") || return 1
     log "downloading $url"
     if ! curl "${CURL_POLICY[@]}" --max-time 120 --max-filesize "$IMAGE_MAX_BYTES" -o "$tmp" -- "$url"; then
       rm -f -- "$tmp"; return 1
     fi
-    mv -- "$tmp" "$file"
+    mv -f -- "$tmp" "$file"
   fi
 
   local coder
@@ -263,8 +269,8 @@ try_candidate() { # source url title credit page w h
   jq -n --arg file "$file" --arg url "$url" --arg title "$title" --arg credit "$credit" \
     --arg page "$page" --arg source "$source" --arg sourceName "${SOURCE_NAMES[$source]}" \
     --arg size "${dims/ /x}" --arg at "$(date -Iseconds)" \
-    '{file:$file, url:$url, title:$title, credit:$credit, page:$page, source:$source, sourceName:$sourceName, size:$size, fetchedAt:$at}' \
-    > "$meta.$$" && mv -f -- "$meta.$$" "$meta"
+    '{file:$file, url:$url, title:$title, credit:$credit, page:$page, source:$source, sourceName:$sourceName, size:$size, fetchedAt:$at}' |
+    atomic_write "$meta" || return 1
   apply "$meta"
 }
 
@@ -357,10 +363,17 @@ cmd_keep() {
   local file theme dest
   file=$(jq -r '.file // empty' "$STATE_DIR/current.json" 2>/dev/null)
   [[ -f $file ]] || die "nothing to keep yet"
-  theme=$(cat "$HOME/.local/state/omarchy/current/theme.name" 2>/dev/null || echo default)
+  theme=$(cat "$HOME/.local/state/omarchy/current/theme.name" 2>/dev/null)
+  [[ $theme =~ ^[A-Za-z0-9._-]+$ && $theme != . && $theme != .. ]] || die "unexpected theme name"
   dest="$HOME/.config/omarchy/backgrounds/$theme"
-  mkdir -p "$dest"
-  cp -n -- "$file" "$dest/"
+  mkdir -p -- "$dest"
+  # Never overwrite: an existing file, or a symlink, of that name wins.
+  if [[ -e $dest/$(basename -- "$file") || -L $dest/$(basename -- "$file") ]]; then
+    echo "$dest/$(basename -- "$file")"
+    return 0
+  fi
+  atomic_write "$dest/$(basename -- "$file")" < "$file" || die "could not save to $dest"
+  chmod 644 -- "$dest/$(basename -- "$file")"
   command -v notify-send >/dev/null && notify-send -t 3000 "Background saved" "Added to $theme backgrounds"
   echo "$dest/$(basename "$file")"
 }
