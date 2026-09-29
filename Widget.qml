@@ -333,7 +333,7 @@ Panel {
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
-          elide: Text.ElideRight
+          wrapMode: Text.WordWrap
         }
       }
     }
