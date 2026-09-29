@@ -16,6 +16,8 @@ The first four sources are on by default, and the plugin swaps every 60 minutes.
 portrait are skipped, repeats are avoided, and when you are offline it
 rotates through the ~40 images it has already cached.
 
+![Wallswap panel](preview.png)
+
 ## Install
 
 ```bash
@@ -37,7 +39,10 @@ The keyboard works too: arrows and Enter, or `N`, `P`, `O`, `K`, and `Space` to 
 
 ## Settings
 
-Settings live on the widget's entry in `~/.config/omarchy/shell.json`, which
+The panel's **Sources** section switches each source on or off and sets how
+often to swap (click **Swap** to cycle through 15 min … once a day … only when you ask).
+
+Everything else, and the same settings, live on the widget's entry in `~/.config/omarchy/shell.json`, which
 reloads when you save it:
 
 ```json
