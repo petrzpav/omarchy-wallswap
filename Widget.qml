@@ -8,6 +8,7 @@
 // script holds a lock and tracks the last swap, so the copies never race.
 
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Layouts
 import Quickshell
 import Quickshell.Io
@@ -47,6 +48,16 @@ Panel {
   property var info: ({})
   readonly property bool paused: info.paused === true
   readonly property bool hasImage: !!info.file
+
+  readonly property var allSources: [
+    { id: "apod", label: "NASA APOD", detail: "Astronomy Picture of the Day" },
+    { id: "bing", label: "Bing", detail: "Image of the day, in 4K" },
+    { id: "wikimedia", label: "Wikimedia Commons", detail: "Picture of the day" },
+    { id: "wallhaven", label: "Wallhaven", detail: query !== "" ? "Top wallpapers matching “" + query + "”" : "Top wallpapers of the year" },
+    { id: "local", label: "Local folder", detail: localDir !== "" ? localDir : "~/Pictures/Wallpapers" }
+  ]
+  readonly property var intervalOptions: [15, 30, 60, 180, 360, 1440, 0]
+  readonly property int navCount: actions.length + allSources.length + 1
 
   property int cursorIndex: 0
   property bool cursorActive: false
@@ -113,7 +124,44 @@ Panel {
 
   function moveCursor(dy) {
     if (!cursorActive) { cursorActive = true; return }
-    cursorIndex = Math.max(0, Math.min(actions.length - 1, cursorIndex + dy))
+    cursorIndex = Math.max(0, Math.min(navCount - 1, cursorIndex + dy))
+  }
+
+  function activateCursor() {
+    var i = cursorIndex
+    if (i < actions.length) trigger(actions[i].id)
+    else if (i < actions.length + allSources.length) toggleSource(allSources[i - actions.length].id)
+    else cycleInterval()
+  }
+
+  // Settings are written back to this widget's shell.json entry, which the
+  // shell reloads and hands straight back to us as `settings`.
+  function saveSetting(key, value) {
+    Quickshell.execDetached(["omarchy", "bar", "set", moduleName, key, String(value)])
+  }
+
+  function toggleSource(id) {
+    var next = sources.slice()
+    var at = next.indexOf(id)
+    if (at >= 0) {
+      if (next.length === 1) return // keep at least one source
+      next.splice(at, 1)
+    } else {
+      next.push(id)
+    }
+    saveSetting("sources", next.join(" "))
+  }
+
+  function cycleInterval() {
+    var at = intervalOptions.indexOf(interval)
+    saveSetting("interval", intervalOptions[(at + 1) % intervalOptions.length])
+  }
+
+  function intervalLabel(minutes) {
+    if (minutes <= 0) return "Only when you ask"
+    if (minutes % 1440 === 0) return minutes === 1440 ? "Once a day" : minutes / 1440 + " days"
+    if (minutes % 60 === 0) return minutes === 60 ? "Every hour" : "Every " + minutes / 60 + " hours"
+    return "Every " + minutes + " minutes"
   }
 
   // ------------------------------------------------------------- lifecycle
@@ -124,6 +172,7 @@ Panel {
   onOpenedChanged: if (opened) {
     cursorActive = false
     cursorIndex = 0
+    panelFlick.contentY = 0
     refreshInfo()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
@@ -198,13 +247,13 @@ Panel {
     open: root.opened
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(380))
-    contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(640))
+    contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(900))
 
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
       onMoveRequested: function(dx, dy) { root.moveCursor(dy) }
-      onActivateRequested: if (root.cursorActive) root.trigger(root.actions[root.cursorIndex].id)
+      onActivateRequested: if (root.cursorActive) root.activateCursor()
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onTextKey: function(t) {
@@ -216,9 +265,20 @@ Panel {
         else if (k === " ") root.trigger("pause")
       }
 
+      Flickable {
+        id: panelFlick
+        anchors.fill: parent
+        contentWidth: width
+        contentHeight: column.implicitHeight
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+        flickableDirection: Flickable.VerticalFlick
+        interactive: contentHeight > height
+        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
       Column {
         id: column
-        width: parent.width
+        width: panelFlick.width
         spacing: Style.space(12)
 
         PanelHero {
@@ -326,15 +386,148 @@ Panel {
           }
         }
 
+        PanelSeparator { foreground: root.foreground }
+
+        Column {
+          width: parent.width
+          spacing: Style.space(4)
+
+          PanelSectionHeader {
+            text: "SOURCES"
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+            bottomPadding: Style.space(4)
+          }
+
+          Repeater {
+            model: root.allSources
+            SourceRow {
+              required property var modelData
+              required property int index
+              width: parent.width
+              entry: modelData
+              rowIndex: root.actions.length + index
+            }
+          }
+
+          IntervalRow {
+            width: parent.width
+            rowIndex: root.actions.length + root.allSources.length
+          }
+        }
+      }
+      }
+    }
+  }
+
+  component SourceRow: CursorSurface {
+    id: sourceRow
+    property var entry: ({})
+    property int rowIndex: 0
+    readonly property bool on: root.sources.indexOf(entry.id) >= 0
+
+    hasCursor: root.cursorActive && root.cursorIndex === rowIndex
+    foreground: root.foreground
+    implicitHeight: sourceLayout.implicitHeight + Style.spacing.rowPaddingX
+
+    MouseArea {
+      anchors.fill: parent
+      hoverEnabled: true
+      cursorShape: Qt.PointingHandCursor
+      onEntered: {
+        root.cursorActive = true
+        root.cursorIndex = sourceRow.rowIndex
+      }
+      onClicked: root.toggleSource(sourceRow.entry.id)
+    }
+
+    RowLayout {
+      id: sourceLayout
+      anchors.left: parent.left
+      anchors.right: parent.right
+      anchors.verticalCenter: parent.verticalCenter
+      anchors.leftMargin: Style.space(10)
+      anchors.rightMargin: Style.space(10)
+      spacing: Style.space(10)
+
+      ColumnLayout {
+        Layout.fillWidth: true
+        spacing: Style.space(1)
+
         Text {
           textFormat: Text.PlainText
-          width: parent.width
-          text: "Sources: " + root.sources.map(function(s) { return root.sourceLabels[s] || s }).join(", ") + (root.interval > 0 ? " · every " + root.interval + " min" : "")
+          Layout.fillWidth: true
+          text: sourceRow.entry.label || ""
+          color: root.foreground
+          opacity: sourceRow.on ? 1.0 : 0.6
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.body
+          elide: Text.ElideRight
+        }
+
+        Text {
+          textFormat: Text.PlainText
+          Layout.fillWidth: true
+          text: sourceRow.entry.detail || ""
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
-          wrapMode: Text.WordWrap
+          elide: Text.ElideRight
         }
+      }
+
+      ToggleSwitch {
+        checked: sourceRow.on
+        interactive: false
+        foreground: root.foreground
+        Layout.alignment: Qt.AlignVCenter
+      }
+    }
+  }
+
+  component IntervalRow: CursorSurface {
+    id: intervalRow
+    property int rowIndex: 0
+
+    hasCursor: root.cursorActive && root.cursorIndex === rowIndex
+    foreground: root.foreground
+    implicitHeight: intervalLayout.implicitHeight + Style.spacing.rowPaddingX
+
+    MouseArea {
+      anchors.fill: parent
+      hoverEnabled: true
+      cursorShape: Qt.PointingHandCursor
+      onEntered: {
+        root.cursorActive = true
+        root.cursorIndex = intervalRow.rowIndex
+      }
+      onClicked: root.cycleInterval()
+    }
+
+    RowLayout {
+      id: intervalLayout
+      anchors.left: parent.left
+      anchors.right: parent.right
+      anchors.verticalCenter: parent.verticalCenter
+      anchors.leftMargin: Style.space(10)
+      anchors.rightMargin: Style.space(10)
+      spacing: Style.space(10)
+
+      Text {
+        textFormat: Text.PlainText
+        text: "Swap"
+        color: root.foreground
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.body
+        Layout.fillWidth: true
+      }
+
+      Text {
+        textFormat: Text.PlainText
+        text: root.intervalLabel(root.interval) + "  ›"
+        color: root.dim
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.body
       }
     }
   }
