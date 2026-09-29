@@ -49,7 +49,56 @@ ATTEMPTS=6
 log() { echo "wallswap: $*" >&2; }
 die() { log "$*"; exit 1; }
 
-http() { curl -fsSL --max-time 30 -A "$UA" "$@"; }
+# Network policy: HTTPS only, no redirects (none of the sources use them), and a
+# hard ceiling on bytes and time, so a misbehaving upstream can neither steer
+# requests elsewhere nor stream without end.
+CURL_POLICY=(--fail --silent --show-error --proto =https --max-redirs 0 -A "$UA")
+API_MAX_BYTES=2000000
+IMAGE_MAX_BYTES=80000000
+
+http() { curl "${CURL_POLICY[@]}" --max-time 30 --max-filesize "$API_MAX_BYTES" "$@"; }
+
+# Each source may only hand back images, and link to pages, on its own hosts.
+# The `local` source is the only one allowed to name a local file, and only
+# one inside the configured folder.
+allowed_image() { # source url
+  case $1 in
+    apod) [[ $2 =~ ^https://apod\.nasa\.gov/apod/image/[^[:space:]]+$ ]] ;;
+    bing) [[ $2 =~ ^https://www\.bing\.com/th\?id=[^[:space:]]+$ ]] ;;
+    wikimedia) [[ $2 =~ ^https://upload\.wikimedia\.org/wikipedia/commons/[^[:space:]]+$ ]] ;;
+    wallhaven) [[ $2 =~ ^https://w\.wallhaven\.cc/full/[^[:space:]]+$ ]] ;;
+    local) [[ $2 == file://* ]] && inside_local_dir "${2#file://}" ;;
+    *) return 1 ;;
+  esac
+}
+
+allowed_page() { # source url
+  case $1 in
+    apod) [[ $2 =~ ^https://apod\.nasa\.gov/[^[:space:]]*$ ]] ;;
+    bing) [[ $2 =~ ^https://www\.bing\.com/[^[:space:]]*$ ]] ;;
+    wikimedia) [[ $2 =~ ^https://commons\.wikimedia\.org/[^[:space:]]*$ ]] ;;
+    wallhaven) [[ $2 =~ ^https://wallhaven\.cc/w/[a-z0-9]+$ ]] ;;
+    local) [[ $2 == file://* ]] && inside_local_dir "${2#file://}" ;;
+    *) return 1 ;;
+  esac
+}
+
+inside_local_dir() { # path
+  local dir path
+  dir=$(realpath -e -- "$LOCAL_DIR" 2>/dev/null) || return 1
+  path=$(realpath -e -- "$1" 2>/dev/null) || return 1
+  [[ $path == "$dir"/* && -f $path ]]
+}
+
+# Decode only the formats we asked for, whatever the file claims to be.
+image_coder() { # file -> jpeg|png|webp
+  case $(file -b --mime-type -- "$1" 2>/dev/null) in
+    image/jpeg) echo jpeg ;;
+    image/png) echo png ;;
+    image/webp) echo webp ;;
+    *) return 1 ;;
+  esac
+}
 
 # --------------------------------------------------------------- sources
 # Each source prints candidates, one per line, tab separated:
@@ -144,6 +193,11 @@ prune_cache() {
 try_candidate() { # source url title credit page w h
   local source=$1 url=$2 title=$3 credit=$4 page=$5 w=$6 h=$7
   [[ -n $url ]] || return 1
+  if ! allowed_image "$source" "$url"; then
+    log "$source: ignoring image outside the source's allowed hosts: ${url:0:120}"
+    return 1
+  fi
+  allowed_page "$source" "$page" || page=""
   seen "$url" && return 1
   acceptable "$w" "$h" || { echo "$url" >> "$STATE_DIR/seen"; return 1; }
 
@@ -158,13 +212,15 @@ try_candidate() { # source url title credit page w h
   elif [[ ! -s $file ]]; then
     tmp="$file.part"
     log "downloading $url"
-    if ! curl -fsSL --max-time 120 --max-filesize 80000000 -A "$UA" -o "$tmp" "$url"; then
+    if ! curl "${CURL_POLICY[@]}" --max-time 120 --max-filesize "$IMAGE_MAX_BYTES" -o "$tmp" -- "$url"; then
       rm -f -- "$tmp"; return 1
     fi
     mv -- "$tmp" "$file"
   fi
 
-  dims=$(magick identify -format '%w %h' "${file}[0]" 2>/dev/null) || dims=$(identify -format '%w %h' "${file}[0]" 2>/dev/null)
+  local coder
+  coder=$(image_coder "$file") || coder=""
+  [[ -n $coder ]] && dims=$(magick identify -format '%w %h' "$coder:${file}[0]" 2>/dev/null)
   if [[ -z $dims ]] || ! acceptable $dims; then
     log "rejected $url (${dims:-not an image})"
     echo "$url" >> "$STATE_DIR/seen"
@@ -270,6 +326,7 @@ cmd_open() {
   local page
   page=$(jq -r '.page // empty' "$STATE_DIR/current.json" 2>/dev/null)
   [[ -n $page ]] || die "nothing to open yet"
+  [[ $page == https://* || $page == file://* ]] || die "refusing to open: $page"
   setsid -f xdg-open "$page" >/dev/null 2>&1
 }
 
@@ -309,7 +366,7 @@ done
 [[ $MIN_WIDTH =~ ^[0-9]+$ ]] || MIN_WIDTH=1920
 [[ $KEEP =~ ^[0-9]+$ ]] || KEEP=40
 
-for tool in curl jq; do command -v $tool >/dev/null || die "$tool is required"; done
+for tool in curl jq file magick; do command -v $tool >/dev/null || die "$tool is required"; done
 mkdir -p "$CACHE_DIR" "$STATE_DIR"
 
 case $cmd in

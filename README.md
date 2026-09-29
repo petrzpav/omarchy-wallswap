@@ -105,8 +105,16 @@ Files: images are cached in `~/.cache/wallswap/` and state is kept in `~/.local/
 
 ## Requirements and network use
 
-Requires `curl`, `jq` and ImageMagick (all present on Omarchy). No sudo, no
-system services, no telemetry.
+Requires `curl`, `jq`, `file` and ImageMagick (all present on Omarchy). No
+sudo, no system services, no telemetry.
+
+Network policy: HTTPS only, no redirects, a 2 MB cap on API responses and 80 MB
+on images, and time limits on every request. Each source may only return
+images from its own image host (e.g. `apod.nasa.gov/apod/image/`,
+`w.wallhaven.cc/full/`); anything else is ignored. Only the `local` source can
+use a local file, and only one inside its folder (symlinks pointing outside are
+rejected). Downloads must be real JPEG, PNG or WebP data and are decoded with
+that decoder only.
 
 Wallswap only contacts the image sources you enable: `api.nasa.gov` /
 `apod.nasa.gov`, `bing.com`, `api.wikimedia.org` / `upload.wikimedia.org` and
