@@ -1,0 +1,292 @@
+#!/bin/bash
+#
+# wallswap - swap the Omarchy background for a fresh image from the web.
+#
+#   wallswap next                 fetch a new image now and set it
+#   wallswap tick                 like `next`, but only when the interval has elapsed
+#   wallswap info                 print the current image's metadata as JSON
+#   wallswap open                 open the current image's source page
+#   wallswap keep                 copy the current image into the theme's backgrounds
+#   wallswap sources              list available sources
+#
+# Options (also readable from the environment, flags win):
+#   --sources LIST       comma list of sources     WALLSWAP_SOURCES   (apod,bing,wikimedia,wallhaven)
+#   --interval MIN       minutes between swaps     WALLSWAP_INTERVAL  (60; 0 = never auto-swap)
+#   --min-width PX       smallest image accepted   WALLSWAP_MIN_WIDTH (1920)
+#   --allow-portrait     accept portrait images    WALLSWAP_ALLOW_PORTRAIT=1
+#   --query TEXT         Wallhaven search query    WALLSWAP_QUERY
+#   --local-dir DIR      folder for `local` source WALLSWAP_LOCAL_DIR (~/Pictures/Wallpapers)
+#   --keep-count N       cached images to keep     WALLSWAP_KEEP (40)
+#   NASA_API_KEY         your api.nasa.gov key (DEMO_KEY is used otherwise)
+
+set -o pipefail
+
+ALL_SOURCES=(apod bing wikimedia wallhaven local)
+declare -A SOURCE_NAMES=(
+  [apod]="NASA Astronomy Picture of the Day"
+  [bing]="Bing image of the day"
+  [wikimedia]="Wikimedia Commons picture of the day"
+  [wallhaven]="Wallhaven top wallpapers"
+  [local]="Local folder"
+)
+
+SOURCES=${WALLSWAP_SOURCES:-apod,bing,wikimedia,wallhaven}
+INTERVAL=${WALLSWAP_INTERVAL:-60}
+MIN_WIDTH=${WALLSWAP_MIN_WIDTH:-1920}
+ALLOW_PORTRAIT=${WALLSWAP_ALLOW_PORTRAIT:-0}
+QUERY=${WALLSWAP_QUERY:-}
+LOCAL_DIR=${WALLSWAP_LOCAL_DIR:-$HOME/Pictures/Wallpapers}
+KEEP=${WALLSWAP_KEEP:-40}
+NASA_KEY=${NASA_API_KEY:-DEMO_KEY}
+
+CACHE_DIR=${XDG_CACHE_HOME:-$HOME/.cache}/wallswap
+STATE_DIR=${XDG_STATE_HOME:-$HOME/.local/state}/wallswap
+UA="wallswap/1.0 (Omarchy background plugin)"
+ATTEMPTS=6
+
+log() { echo "wallswap: $*" >&2; }
+die() { log "$*"; exit 1; }
+
+http() { curl -fsSL --max-time 30 -A "$UA" "$@"; }
+
+# --------------------------------------------------------------- sources
+# Each source prints candidates, one per line, tab separated:
+#   image-url  title  credit  page-url  [width  height]
+# Width/height are optional; they let us skip unsuitable images before download.
+
+src_apod() {
+  http "https://api.nasa.gov/planetary/apod?api_key=$NASA_KEY&count=5" | jq -r '
+    .[] | select(.media_type == "image")
+    | (.date | gsub("-"; "") | .[2:]) as $d
+    | [(.hdurl // .url), .title, ("NASA APOD" + (if .copyright then " · © " + (.copyright | gsub("\\s+"; " ") | ltrimstr(" ")) else "" end)),
+       "https://apod.nasa.gov/apod/ap\($d).html"] | @tsv'
+}
+
+src_bing() {
+  local idx=$(( RANDOM % 2 * 8 ))
+  http "https://www.bing.com/HPImageArchive.aspx?format=js&idx=$idx&n=8&mkt=en-US" | jq -r '
+    .images[]
+    | (.copyright | capture("^(?<t>.*?)\\s*\\((?<c>©.*)\\)$") // {t: .copyright, c: "Bing"}) as $m
+    | ["https://www.bing.com\(.urlbase)_UHD.jpg", $m.t, ("Bing · " + $m.c), .copyrightlink, 3840, 2160] | @tsv'
+}
+
+src_wikimedia() {
+  # Picture of the day from a random date in the last three years.
+  local day
+  day=$(date -d "-$(( RANDOM % 1095 )) days" +%Y/%m/%d)
+  http "https://api.wikimedia.org/feed/v1/wikipedia/en/featured/$day" | jq -r '
+    .image | select(. != null)
+    | (.image.source | sub("\\?.*$"; "")) as $src
+    | ($src | capture("/commons/(?<p>[0-9a-f]/[0-9a-f]{2})/(?<f>[^/]+)$")) as $m
+    | (if .image.width > 3840 and ($m.f | test("\\.(jpe?g|png)$"; "i"))
+       then "https://upload.wikimedia.org/wikipedia/commons/thumb/\($m.p)/\($m.f)/3840px-\($m.f)"
+       else $src end) as $url
+    | [$url, ((.description.text // .title) | gsub("[\t\n]"; " ") | .[0:160]),
+       ("Wikimedia Commons" + (if .artist.text then " · " + (.artist.text | gsub("[\t\n]"; " ") | split(". ")[0] | .[0:60]) else "" end)),
+       .file_page, .image.width, .image.height] | @tsv'
+}
+
+src_wallhaven() {
+  local page=$(( RANDOM % 5 + 1 )) q
+  q=$(jq -rn --arg q "$QUERY" '$q | @uri')
+  http "https://wallhaven.cc/api/v1/search?sorting=toplist&topRange=1y&categories=100&purity=100&atleast=${MIN_WIDTH}x1080&ratios=landscape&page=$page&q=$q" | jq -r '
+    .data[] | (.resolution | split("x")) as $r
+    | [.path, ("Wallhaven " + .id), "Wallhaven", .url, $r[0], $r[1]] | @tsv'
+}
+
+src_local() {
+  [[ -d $LOCAL_DIR ]] || { log "local folder not found: $LOCAL_DIR"; return 1; }
+  find -L "$LOCAL_DIR" -maxdepth 2 -type f \
+    \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.webp' \) -print0 |
+    while IFS= read -r -d '' f; do
+      printf 'file://%s\t%s\t%s\t%s\n' "$f" "$(basename "${f%.*}")" "Local folder" "file://$f"
+    done
+}
+
+# --------------------------------------------------------------- helpers
+
+seen() { grep -qxF -- "$1" "$STATE_DIR/seen" 2>/dev/null; }
+
+acceptable() { # width height
+  local w=$1 h=$2
+  [[ $w =~ ^[0-9]+$ && $h =~ ^[0-9]+$ && $h -gt 0 ]] || return 0 # unknown: decide after download
+  (( w >= MIN_WIDTH )) || return 1
+  [[ $ALLOW_PORTRAIT == 1 ]] || (( w * 10 >= h * 13 )) || return 1 # at least ~4:3 landscape
+}
+
+set_background() { # file
+  if command -v omarchy-theme-bg-set >/dev/null; then
+    omarchy-theme-bg-set "$1"
+  else
+    omarchy theme bg set "$1"
+  fi
+}
+
+prune_cache() {
+  ls -1t "$CACHE_DIR"/*.json 2>/dev/null | tail -n +$(( KEEP + 1 )) | while read -r meta; do
+    local img
+    img=$(jq -r '.file' "$meta" 2>/dev/null)
+    # Never delete what is on screen right now.
+    [[ $img == "$(jq -r '.file' "$STATE_DIR/current.json" 2>/dev/null)" ]] && continue
+    rm -f -- "$img" "$meta"
+  done
+  tail -n 2000 "$STATE_DIR/seen" > "$STATE_DIR/seen.tmp" 2>/dev/null && mv "$STATE_DIR/seen.tmp" "$STATE_DIR/seen"
+}
+
+# Try one candidate: download, validate, cache, set. Returns 0 on success.
+try_candidate() { # source url title credit page w h
+  local source=$1 url=$2 title=$3 credit=$4 page=$5 w=$6 h=$7
+  [[ -n $url ]] || return 1
+  seen "$url" && return 1
+  acceptable "$w" "$h" || { echo "$url" >> "$STATE_DIR/seen"; return 1; }
+
+  local id ext file tmp dims
+  id=$(printf '%s' "$url" | sha1sum | cut -c1-12)
+  ext=${url##*.}; ext=${ext%%\?*}; ext=${ext,,}
+  [[ $ext =~ ^(jpg|jpeg|png|webp)$ ]] || ext=jpg
+  file="$CACHE_DIR/$source-$id.$ext"
+
+  if [[ $url == file://* ]]; then
+    file=${url#file://}
+  elif [[ ! -s $file ]]; then
+    tmp="$file.part"
+    log "downloading $url"
+    if ! curl -fsSL --max-time 120 --max-filesize 80000000 -A "$UA" -o "$tmp" "$url"; then
+      rm -f -- "$tmp"; return 1
+    fi
+    mv -- "$tmp" "$file"
+  fi
+
+  dims=$(magick identify -format '%w %h' "${file}[0]" 2>/dev/null) || dims=$(identify -format '%w %h' "${file}[0]" 2>/dev/null)
+  if [[ -z $dims ]] || ! acceptable $dims; then
+    log "rejected $url (${dims:-not an image})"
+    echo "$url" >> "$STATE_DIR/seen"
+    [[ $url == file://* ]] || rm -f -- "$file"
+    return 1
+  fi
+
+  echo "$url" >> "$STATE_DIR/seen"
+  local meta="$CACHE_DIR/$(basename "${file%.*}").json"
+  [[ $url == file://* ]] && meta="$STATE_DIR/local.json"
+  jq -n --arg file "$file" --arg url "$url" --arg title "$title" --arg credit "$credit" \
+    --arg page "$page" --arg source "$source" --arg sourceName "${SOURCE_NAMES[$source]}" \
+    --arg size "${dims/ /x}" --arg at "$(date -Iseconds)" \
+    '{file:$file, url:$url, title:$title, credit:$credit, page:$page, source:$source, sourceName:$sourceName, size:$size, fetchedAt:$at}' \
+    > "$meta"
+  apply "$meta"
+}
+
+apply() { # meta.json
+  local file
+  file=$(jq -r '.file' "$1")
+  set_background "$file" || return 1
+  cp -f -- "$1" "$STATE_DIR/current.json"
+  date +%s > "$STATE_DIR/last"
+  log "set $(jq -r '"\(.title) — \(.credit)"' "$1")"
+}
+
+# Offline or every source failed: rotate through what we already have.
+fallback_cached() {
+  local current meta
+  current=$(jq -r '.file' "$STATE_DIR/current.json" 2>/dev/null)
+  meta=$(ls -1 "$CACHE_DIR"/*.json 2>/dev/null | shuf | while read -r m; do
+    [[ $(jq -r '.file' "$m") != "$current" && -f $(jq -r '.file' "$m") ]] && { echo "$m"; break; }
+  done)
+  [[ -n $meta ]] || return 1
+  log "no new image available, reusing a cached one"
+  apply "$meta"
+}
+
+cmd_next() {
+  local -a sources
+  IFS=', ' read -r -a sources <<< "$SOURCES"
+  (( ${#sources[@]} )) || die "no sources configured"
+
+  local attempt source line
+  for (( attempt = 0; attempt < ATTEMPTS; attempt++ )); do
+    source=${sources[RANDOM % ${#sources[@]}]}
+    declare -F "src_$source" >/dev/null || { log "unknown source: $source"; continue; }
+    while IFS=$'\t' read -r url title credit page w h; do
+      try_candidate "$source" "$url" "$title" "$credit" "$page" "$w" "$h" && { prune_cache; return 0; }
+    done < <("src_$source" 2>/dev/null | shuf)
+    log "$source: nothing new, trying another source"
+  done
+  fallback_cached || die "could not fetch a new background"
+}
+
+cmd_tick() {
+  (( INTERVAL > 0 )) || return 0
+  local last now
+  last=$(cat "$STATE_DIR/last" 2>/dev/null || echo 0)
+  now=$(date +%s)
+  (( now - last >= INTERVAL * 60 )) || return 0
+  cmd_next
+}
+
+cmd_info() {
+  if [[ -f $STATE_DIR/current.json ]]; then
+    local last now
+    last=$(cat "$STATE_DIR/last" 2>/dev/null || echo 0)
+    now=$(date +%s)
+    jq -c --argjson next "$(( INTERVAL > 0 ? INTERVAL * 60 - (now - last) : -1 ))" '. + {nextInSeconds: $next}' "$STATE_DIR/current.json"
+  else
+    echo '{}'
+  fi
+}
+
+cmd_open() {
+  local page
+  page=$(jq -r '.page // empty' "$STATE_DIR/current.json" 2>/dev/null)
+  [[ -n $page ]] || die "nothing to open yet"
+  setsid -f xdg-open "$page" >/dev/null 2>&1
+}
+
+cmd_keep() {
+  local file theme dest
+  file=$(jq -r '.file // empty' "$STATE_DIR/current.json" 2>/dev/null)
+  [[ -f $file ]] || die "nothing to keep yet"
+  theme=$(cat "$HOME/.local/state/omarchy/current/theme.name" 2>/dev/null || echo default)
+  dest="$HOME/.config/omarchy/backgrounds/$theme"
+  mkdir -p "$dest"
+  cp -n -- "$file" "$dest/"
+  command -v notify-send >/dev/null && notify-send -t 3000 "Background saved" "Added to $theme backgrounds"
+  echo "$dest/$(basename "$file")"
+}
+
+cmd_sources() {
+  local s
+  for s in "${ALL_SOURCES[@]}"; do printf '%-10s %s\n' "$s" "${SOURCE_NAMES[$s]}"; done
+}
+
+# --------------------------------------------------------------- main
+
+cmd=${1:-help}; shift || true
+while (( $# )); do
+  case $1 in
+    --sources) SOURCES=$2; shift 2 ;;
+    --interval) INTERVAL=$2; shift 2 ;;
+    --min-width) MIN_WIDTH=$2; shift 2 ;;
+    --allow-portrait) ALLOW_PORTRAIT=1; shift ;;
+    --query) QUERY=$2; shift 2 ;;
+    --local-dir) LOCAL_DIR=${2/#\~/$HOME}; shift 2 ;;
+    --keep-count) KEEP=$2; shift 2 ;;
+    *) die "unknown option: $1" ;;
+  esac
+done
+[[ $INTERVAL =~ ^[0-9]+$ ]] || INTERVAL=60
+[[ $MIN_WIDTH =~ ^[0-9]+$ ]] || MIN_WIDTH=1920
+[[ $KEEP =~ ^[0-9]+$ ]] || KEEP=40
+
+for tool in curl jq; do command -v $tool >/dev/null || die "$tool is required"; done
+mkdir -p "$CACHE_DIR" "$STATE_DIR"
+
+case $cmd in
+  next|tick)
+    # One swap at a time: every bar (one per monitor) runs its own timer.
+    exec 9> "$STATE_DIR/lock"
+    flock -n 9 || { log "another swap is running"; exit 0; }
+    "cmd_$cmd" ;;
+  info|open|keep|sources) "cmd_$cmd" ;;
+  help|-h|--help) sed -n '3,22p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) die "unknown command: $cmd (try: wallswap help)" ;;
+esac

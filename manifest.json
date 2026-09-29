@@ -1,0 +1,95 @@
+{
+  "schemaVersion": 1,
+  "id": "petrzpav.wallswap",
+  "name": "Wallswap",
+  "version": "1.0.0",
+  "author": "Pavel Petržela",
+  "license": "MIT",
+  "description": "Rotates your background with fresh images from NASA APOD, Bing, Wikimedia Commons, Wallhaven or a local folder.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Widget.qml"
+  },
+  "barWidget": {
+    "displayName": "Wallswap",
+    "description": "Swaps the background on a timer. Click for the next image, right-click to open its source, middle-click to keep it in your theme's backgrounds.",
+    "category": "System",
+    "aliases": ["wallpaper", "background", "bg", "variety", "apod", "nasa"],
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "sources": ["apod", "bing", "wikimedia", "wallhaven"],
+      "interval": 60,
+      "minWidth": 1920,
+      "allowPortrait": false,
+      "wallhavenQuery": "",
+      "localDir": "~/Pictures/Wallpapers",
+      "nasaApiKey": ""
+    },
+    "schema": [
+      {
+        "key": "sources",
+        "type": "multiselect",
+        "label": "Sources",
+        "description": "Each swap picks one of these at random.",
+        "noSelectionText": "APOD, Bing, Wikimedia, Wallhaven",
+        "placeholderText": "Search sources...",
+        "options": [
+          { "value": "apod", "label": "NASA APOD", "description": "Astronomy Picture of the Day, random from the archive" },
+          { "value": "bing", "label": "Bing", "description": "Bing image of the day, last ~2 weeks, in 4K" },
+          { "value": "wikimedia", "label": "Wikimedia Commons", "description": "Picture of the day from the last three years" },
+          { "value": "wallhaven", "label": "Wallhaven", "description": "Top SFW wallpapers of the year, optionally filtered by a search query" },
+          { "value": "local", "label": "Local folder", "description": "Images from the folder set below" }
+        ],
+        "defaultValue": ["apod", "bing", "wikimedia", "wallhaven"]
+      },
+      {
+        "key": "interval",
+        "type": "integer",
+        "label": "Minutes between swaps",
+        "description": "0 swaps only when you click the icon.",
+        "min": 0,
+        "max": 1440,
+        "step": 5,
+        "defaultValue": 60
+      },
+      {
+        "key": "minWidth",
+        "type": "integer",
+        "label": "Minimum image width (px)",
+        "min": 800,
+        "max": 7680,
+        "step": 160,
+        "defaultValue": 1920
+      },
+      {
+        "key": "allowPortrait",
+        "type": "boolean",
+        "label": "Allow portrait images",
+        "defaultValue": false
+      },
+      {
+        "key": "wallhavenQuery",
+        "type": "string",
+        "label": "Wallhaven search",
+        "description": "For example: nature, space, city night. Leave empty for the overall top list.",
+        "defaultValue": ""
+      },
+      {
+        "key": "localDir",
+        "type": "path",
+        "label": "Local folder",
+        "defaultValue": "~/Pictures/Wallpapers"
+      },
+      {
+        "key": "nasaApiKey",
+        "type": "string",
+        "label": "NASA API key",
+        "description": "Optional. The shared DEMO_KEY is limited to 50 requests a day per IP; get a free key at api.nasa.gov.",
+        "defaultValue": ""
+      }
+    ]
+  }
+}
