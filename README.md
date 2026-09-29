@@ -35,12 +35,41 @@ An icon appears in the right side of the bar. **Click** it for the panel:
 The keyboard works too: arrows and Enter, or `N`, `P`, `O`, `K`, and `Space` to pause.
 **Right-click** the icon for the next background, or **middle-click** to keep the current one.
 
-Settings (sources, interval, minimum width, Wallhaven search, local folder, NASA
-API key) are in the bar settings panel, or inline in `~/.config/omarchy/shell.json`:
+## Settings
+
+Settings live on the widget's entry in `~/.config/omarchy/shell.json`, which
+reloads when you save it:
 
 ```json
-{ "id": "petrzpav.wallswap", "sources": ["apod", "bing"], "interval": 30 }
+{
+  "id": "petrzpav.wallswap",
+  "sources": ["apod", "bing", "wikimedia", "wallhaven", "local"],
+  "interval": 30,
+  "minWidth": 2560,
+  "allowPortrait": false,
+  "wallhavenQuery": "space",
+  "localDir": "~/Pictures/Wallpapers",
+  "nasaApiKey": ""
+}
 ```
+
+Or from the terminal:
+
+```bash
+omarchy bar set petrzpav.wallswap sources "apod bing"
+omarchy bar set petrzpav.wallswap interval 30
+omarchy bar set petrzpav.wallswap wallhavenQuery "mountains"
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `sources` | apod, bing, wikimedia, wallhaven | where images come from; each swap picks one at random |
+| `interval` | `60` | minutes between swaps; `0` = only when you ask |
+| `minWidth` | `1920` | skip smaller images |
+| `allowPortrait` | `false` | accept portrait images |
+| `wallhavenQuery` | empty | Wallhaven search, e.g. `nature`, `space`, `city night` |
+| `localDir` | `~/Pictures/Wallpapers` | folder for the `local` source |
+| `nasaApiKey` | DEMO_KEY | free key from api.nasa.gov if you hit APOD's 50/day demo limit |
 
 Changing the theme sets the theme's own background. Wallswap takes over again at
 the next swap.

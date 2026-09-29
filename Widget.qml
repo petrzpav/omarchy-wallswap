@@ -22,7 +22,9 @@ Panel {
   readonly property string script: Qt.resolvedUrl("bin/wallswap").toString().replace(/^file:\/\//, "")
 
   readonly property var sources: {
+    // A list in shell.json, or "apod bing" from `omarchy bar set`.
     var list = setting("sources", [])
+    if (typeof list === "string") list = list.split(/[\s,]+/).filter(function(s) { return s !== "" })
     return Array.isArray(list) && list.length > 0 ? list : ["apod", "bing", "wikimedia", "wallhaven"]
   }
   readonly property int interval: Number(setting("interval", 60))
