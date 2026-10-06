@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [1.0.4] - 2026-10-06
+
+### Added
+
+- Instructions for AI agents: the repository follows Flow (ig-flow and ig-changelog skills).
+
 ## [1.0.3] - 2026-09-29
 
 ### Security
@@ -37,6 +43,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 - Rotate Omarchy backgrounds from NASA APOD, Bing, Wikimedia and Wallhaven.
 
+[1.0.4]: https://https://github.com/petrzpav/omarchy-wallswap/compare/v1.0.3...v1.0.4
 [1.0.3]: https://github.com/petrzpav/omarchy-wallswap/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/petrzpav/omarchy-wallswap/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/petrzpav/omarchy-wallswap/compare/v1.0.0...v1.0.1
