@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "petrzpav.wallswap",
   "name": "Wallswap",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "author": "Pavel Petržela",
   "license": "MIT",
   "description": "Rotates your background with fresh images from NASA APOD, Bing, Wikimedia Commons, Wallhaven or a local folder.",
