@@ -6,6 +6,16 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.5] - 2026-10-24
+
+### Fixed
+
+- NASA APOD images load again from science.nasa.gov.
+
+### Removed
+
+- The NASA API key setting, which APOD no longer uses.
+
 ## [1.0.4] - 2026-10-06
 
 ### Added
@@ -46,7 +56,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Rotate Omarchy backgrounds from NASA APOD, Bing, Wikimedia and Wallhaven.
 
 [Unreleased]: https://github.com/petrzpav/omarchy-wallswap/compare/staging...dev
-[1.0.4]: https://github.com/petrzpav/omarchy-wallswap/compare/v1.0.3...v1.0.4
+[1.0.5]: https://github.com/petrzpav/omarchy-wallswap/compare/v1.0.4...v1.0.5
+[1.0.4]: https://https://github.com/petrzpav/omarchy-wallswap/compare/v1.0.3...v1.0.4
 [1.0.3]: https://github.com/petrzpav/omarchy-wallswap/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/petrzpav/omarchy-wallswap/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/petrzpav/omarchy-wallswap/compare/v1.0.0...v1.0.1
