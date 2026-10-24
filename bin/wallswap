@@ -19,7 +19,6 @@
 #   --query TEXT         Wallhaven search query    WALLSWAP_QUERY
 #   --local-dir DIR      folder for `local` source WALLSWAP_LOCAL_DIR (~/Pictures/Wallpapers)
 #   --keep-count N       cached images to keep     WALLSWAP_KEEP (40)
-#   NASA_API_KEY         your api.nasa.gov key (DEMO_KEY is used otherwise)
 
 set -o pipefail
 
@@ -39,8 +38,6 @@ ALLOW_PORTRAIT=${WALLSWAP_ALLOW_PORTRAIT:-0}
 QUERY=${WALLSWAP_QUERY:-}
 LOCAL_DIR=${WALLSWAP_LOCAL_DIR:-$HOME/Pictures/Wallpapers}
 KEEP=${WALLSWAP_KEEP:-40}
-NASA_KEY=${NASA_API_KEY:-DEMO_KEY}
-[[ $NASA_KEY =~ ^[A-Za-z0-9]{1,128}$ ]] || NASA_KEY=DEMO_KEY
 
 CACHE_DIR=${XDG_CACHE_HOME:-$HOME/.cache}/wallswap
 STATE_DIR=${XDG_STATE_HOME:-$HOME/.local/state}/wallswap
@@ -91,7 +88,7 @@ http() { curl "${CURL_POLICY[@]}" --max-time 30 --max-filesize "$API_MAX_BYTES" 
 # one inside the configured folder.
 allowed_image() { # source url
   case $1 in
-    apod) [[ $2 =~ ^https://apod\.nasa\.gov/apod/image/[^[:space:]]+$ ]] ;;
+    apod) [[ $2 =~ ^https://assets\.science\.nasa\.gov/content/dam/science/cds/apod/[^[:space:]]+$ ]] ;;
     bing) [[ $2 =~ ^https://www\.bing\.com/th\?id=[^[:space:]]+$ ]] ;;
     wikimedia) [[ $2 =~ ^https://upload\.wikimedia\.org/wikipedia/commons/[^[:space:]]+$ ]] ;;
     wallhaven) [[ $2 =~ ^https://w\.wallhaven\.cc/full/[^[:space:]]+$ ]] ;;
@@ -102,7 +99,7 @@ allowed_image() { # source url
 
 allowed_page() { # source url
   case $1 in
-    apod) [[ $2 =~ ^https://apod\.nasa\.gov/[^[:space:]]*$ ]] ;;
+    apod) [[ $2 =~ ^https://science\.nasa\.gov/image-article/apod-[^[:space:]]*$ ]] ;;
     bing) [[ $2 =~ ^https://www\.bing\.com/[^[:space:]]*$ ]] ;;
     wikimedia) [[ $2 =~ ^https://commons\.wikimedia\.org/[^[:space:]]*$ ]] ;;
     wallhaven) [[ $2 =~ ^https://wallhaven\.cc/w/[a-z0-9]+$ ]] ;;
@@ -134,13 +131,20 @@ image_coder() { # file -> jpeg|png|webp
 # Width/height are optional; they let us skip unsuitable images before download.
 
 src_apod() {
-  # The key goes to curl on stdin, never on its command line, so it does not
-  # show up in the process list.
-  http --config - <<< "url = \"https://api.nasa.gov/planetary/apod?api_key=$NASA_KEY&count=5\"" | jq -r '
-    .[] | select(.media_type == "image")
-    | (.date | gsub("-"; "") | .[2:]) as $d
-    | [(.hdurl // .url), .title, ("NASA APOD" + (if .copyright then " · © " + (.copyright | gsub("\\s+"; " ") | ltrimstr(" ")) else "" end)),
-       "https://apod.nasa.gov/apod/ap\($d).html"] | @tsv'
+  # APOD moved to science.nasa.gov in 2026 and api.nasa.gov now answers every
+  # date with the NASA logo, so read the archive from the site's own REST API.
+  # ~11k posts at 10 a page; a page past the end fails and the next attempt
+  # picks another source.
+  local page=$(( RANDOM % 1100 + 1 ))
+  http "https://science.nasa.gov/wp-json/wp/v2/image-article?search=APOD&per_page=10&page=$page&_embed=wp:featuredmedia&_fields=link,title,_links,_embedded" | jq -r '
+    .[] | (.title.rendered
+      | gsub("&#(?<n>[0-9]+);"; ([.n | tonumber] | implode))
+      | gsub("&amp;"; "&") | gsub("&quot;"; "\"") | gsub("[\t\n]"; " ")) as $t
+    | select($t | startswith("APOD:"))
+    | (._embedded["wp:featuredmedia"][0] // empty) as $m
+    | select($m.source_url // "" | contains("/cds/apod/")) # video days carry a stock thumbnail
+    | [$m.source_url, ($t | sub("^APOD:\\s*[0-9]{4} [A-Za-z]+ [0-9]{1,2}\\s*[–-]\\s*"; "")), "NASA APOD",
+       .link, $m.media_details.width, $m.media_details.height] | @tsv'
 }
 
 src_bing() {
@@ -416,6 +420,6 @@ case $cmd in
     flock -n 9 || { log "another swap is running"; exit 0; }
     "cmd_$cmd" ;;
   info|open|keep|sources|pause|resume|toggle) "cmd_$cmd" ;;
-  help|-h|--help) sed -n '3,24p' "$0" | sed 's/^# \{0,1\}//' ;;
+  help|-h|--help) sed -n '3,21p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) die "unknown command: $cmd (try: wallswap help)" ;;
 esac

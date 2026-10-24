@@ -53,8 +53,7 @@ reloads when you save it:
   "minWidth": 2560,
   "allowPortrait": false,
   "wallhavenQuery": "space",
-  "localDir": "~/Pictures/Wallpapers",
-  "nasaApiKey": ""
+  "localDir": "~/Pictures/Wallpapers"
 }
 ```
 
@@ -74,7 +73,6 @@ omarchy bar set petrzpav.wallswap wallhavenQuery "mountains"
 | `allowPortrait` | `false` | accept portrait images |
 | `wallhavenQuery` | empty | Wallhaven search, e.g. `nature`, `space`, `city night` |
 | `localDir` | `~/Pictures/Wallpapers` | folder for the `local` source |
-| `nasaApiKey` | DEMO_KEY | free key from api.nasa.gov if you hit APOD's 50/day demo limit |
 
 Changing the theme sets the theme's own background. Wallswap takes over again at
 the next swap.
@@ -110,14 +108,14 @@ sudo, no system services, no telemetry.
 
 Network policy: HTTPS only, no redirects, a 2 MB cap on API responses and 80 MB
 on images, and time limits on every request. Each source may only return
-images from its own image host (e.g. `apod.nasa.gov/apod/image/`,
+images from its own image host (e.g. `assets.science.nasa.gov/content/dam/science/cds/apod/`,
 `w.wallhaven.cc/full/`); anything else is ignored. Only the `local` source can
 use a local file, and only one inside its folder (symlinks pointing outside are
 rejected). Downloads must be real JPEG, PNG or WebP data and are decoded with
 that decoder only.
 
-Wallswap only contacts the image sources you enable: `api.nasa.gov` /
-`apod.nasa.gov`, `bing.com`, `api.wikimedia.org` / `upload.wikimedia.org` and
+Wallswap only contacts the image sources you enable: `science.nasa.gov` /
+`assets.science.nasa.gov`, `bing.com`, `api.wikimedia.org` / `upload.wikimedia.org` and
 `wallhaven.cc`. Images keep their original licenses, and the panel shows the
 credit and links to the source page.
 
