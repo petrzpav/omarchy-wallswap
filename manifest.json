@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "petrzpav.wallswap",
   "name": "Wallswap",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "author": "Pavel Petržela",
   "license": "MIT",
   "description": "Rotates your background with fresh images from NASA APOD, Bing, Wikimedia Commons, Wallhaven or a local folder.",
@@ -25,8 +25,7 @@
       "minWidth": 1920,
       "allowPortrait": false,
       "wallhavenQuery": "",
-      "localDir": "~/Pictures/Wallpapers",
-      "nasaApiKey": ""
+      "localDir": "~/Pictures/Wallpapers"
     },
     "schema": [
       {
@@ -82,13 +81,6 @@
         "type": "path",
         "label": "Local folder",
         "defaultValue": "~/Pictures/Wallpapers"
-      },
-      {
-        "key": "nasaApiKey",
-        "type": "string",
-        "label": "NASA API key",
-        "description": "Optional. The shared DEMO_KEY is limited to 50 requests a day per IP; get a free key at api.nasa.gov.",
-        "defaultValue": ""
       }
     ]
   }

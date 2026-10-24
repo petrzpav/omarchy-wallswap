@@ -33,7 +33,6 @@ Panel {
   readonly property bool allowPortrait: setting("allowPortrait", false) === true
   readonly property string query: String(setting("wallhavenQuery", "") || "")
   readonly property string localDir: String(setting("localDir", "") || "")
-  readonly property string nasaKey: String(setting("nasaApiKey", "") || "")
 
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property color urgent: bar ? bar.urgent : Color.urgent
@@ -41,9 +40,6 @@ Panel {
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
   readonly property var sourceLabels: ({ apod: "NASA APOD", bing: "Bing", wikimedia: "Wikimedia", wallhaven: "Wallhaven", local: "Local folder" })
-
-  // Passed through the environment, never argv, so the key stays out of `ps`.
-  readonly property var scriptEnvironment: nasaKey !== "" ? ({ NASA_API_KEY: nasaKey }) : ({})
 
   property bool busy: false
   property string busyLabel: ""
@@ -182,7 +178,6 @@ Panel {
 
   Process {
     id: swapProc
-    environment: root.scriptEnvironment
     stderr: StdioCollector {
       id: swapErr
       waitForEnd: true
@@ -199,13 +194,11 @@ Panel {
 
   Process {
     id: actionProc
-    environment: root.scriptEnvironment
     onExited: root.refreshInfo()
   }
 
   Process {
     id: infoProc
-    environment: root.scriptEnvironment
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
